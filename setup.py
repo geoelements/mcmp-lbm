@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='3D_MCMP_MRT_LBM',
-    version='0.1',
+    version='0.2',
     packages=find_packages(),
     install_requires=[
         'numpy',
@@ -10,7 +10,7 @@ setup(
         'matplotlib',
         'taichi',
         'vtk',
-        'json'
+        'json',
     ],
     author='Qiuyu Wang',
     author_email='wangqiuyu@utexas.edu',
