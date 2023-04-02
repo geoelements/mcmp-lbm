@@ -16,7 +16,12 @@ import LBM_solver as LBM
 # ti.init(arch=ti.gpu, dynamic_index=False)
 ti.init(arch=ti.cpu,cpu_max_num_threads=32, dynamic_index=False)
 
-LBM.read_json("./input.json")
+if len(sys.argv) < 2:
+    print("Please provide input file path.")
+    sys.exit(1)
+
+input_file = sys.argv[1]
+LBM.read_json(input_file)
 
 for x in range(LBM.lx):
     for y in range(LBM.ly):
