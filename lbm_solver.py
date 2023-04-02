@@ -14,7 +14,7 @@ from vtk.util import numpy_support
 from pyevtk.hl import gridToVTK
 import taichi as ti
 import json
-import LBM_parameters as lbm
+import lbm_parameters as parameters
 import utility as ut
 
 # Default parameter settings
@@ -37,7 +37,7 @@ rho_2 = 2 # initial density of fluid 2
 rhos = 3 # density of solid phase
 
 # Compute relaxation times and digonal collision matrix
-tau_1f, tau_2f, S_dig_np_1, S_dig_np_2 = lbm.update_S(niu_1, niu_2)
+tau_1f, tau_2f, S_dig_np_1, S_dig_np_2 = parameters.update_S(niu_1, niu_2)
 
 # Injection control
 inject_period = 100 # number of time steps between injections
@@ -58,6 +58,7 @@ nb_steps = 1000 # total number of time steps in simulation
 
 # Dimension
 lx = ly = lz = 100 # size of simulation domain
+R = 0 # place a sphere of fluid 1 with a radius of R in fluid 2
 
 # Input files
 solid_np = np.zeros((lx, ly, lz), dtype=np.int8) # solid phase initial configuration
@@ -82,7 +83,7 @@ def read_json(json_file):
     Returns:
     None
     """
-    global lx, ly, lz, G_12, niu_1, rho_1, G_1s, rho_2, niu_2, G_2s, rhos
+    global lx, ly, lz, G_12, niu_1, rho_1, G_1s, rho_2, niu_2, G_2s, rhos, R
     global tau_1f, tau_2f, S_dig_np_1, S_dig_np_2, solid_np, nb_solid
     global Q, dim, inject_period, density_increment, carn_star, T_Tc, G_11, G_22, MC, G
     global vtk_dstep, stat_dstep, nb_steps, vtk_path, sparse, MRT, rhol_spinodal, rhog_spinodal
@@ -110,23 +111,26 @@ def read_json(json_file):
     G_22 = data['fluid 2']['intra-molecule interaction']
 
     # Update the D2Q9 relaxation parameters for both fluids
-    tau_1f, tau_2f, S_dig_np_1, S_dig_np_2 = lbm.update_S(niu_1, niu_2)
+    tau_1f, tau_2f, S_dig_np_1, S_dig_np_2 = parameters.update_S(niu_1, niu_2)
     
     # Solid parameters
     rhos = data['solid']['density']
     solid_np = np.zeros((lx, ly, lz), dtype=np.int8)
+    scale_factor = data['solid']['scale factor']
 
     if data['solid']['grain location']:
-        # Read the grain location from a file
-        solid_np = ut.read_positions(data['solid']['grain location'], lx, ly, lz, dim)
+         # Read the grain location from a file
+        solid_np = ut.read_positions(data['solid']['grain location'],lx,ly,lz,dim,scale_factor)
     elif data['solid']['voxel location']:
-        # Read the voxel location from a file
-        solid_np = ut.read_voxels(data['solid']['voxel location'])
+        # Read the voxel location from a ASCII file
+        solid_np = ut.read_voxels(data['solid']['voxel location'],scale_factor)
+    elif data['solid']['read tiff']:
+        # Read the voxel location from a TIFF file
+        solid_np = ut.read_tiff(data['solid']['read tiff'],lx,ly,lz,scale_factor)
+
     nb_solid = np.count_nonzero(solid_np)
 
-    print("The number of solid nodes is ", nb_solid)
-    print("Porosity = {:.3f}".format(1 - nb_solid / (lx * ly * lz)))
-    
+        
     # Simulation parameters
     density_increment = data['setting']['inject amount']
     MC = data['setting']['multicomponent'] 
@@ -140,6 +144,7 @@ def read_json(json_file):
         os.makedirs(vtk_path)
     sparse = data['setting']['sparse memory']
     MRT = data['setting']['MRT']
+    R = data['setting']['fluid sphere radius']
 
     carn_star = data['EOS']['Carnahan Starling']
     T_Tc = data['EOS']['T_Tc']
@@ -288,19 +293,19 @@ class D3Q19_MC:
 
         # Set up constants for relaxation time
         self.w = ti.field(ti.f32, shape=(Q))
-        self.w.from_numpy(lbm.w)
+        self.w.from_numpy(parameters.w)
         self.M_mat = ti.Matrix.field(Q, Q, ti.f32, shape=())
         self.inv_M_mat = ti.Matrix.field(Q, Q, ti.f32, shape=())
-        self.M_mat[None] = ti.Matrix(lbm.M_np)
-        self.inv_M_mat[None] = ti.Matrix(lbm.inv_M_np)
+        self.M_mat[None] = ti.Matrix(parameters.M_np)
+        self.inv_M_mat[None] = ti.Matrix(parameters.inv_M_np)
         self.S_dig_vec_1 = ti.Vector.field(Q, ti.f32, shape=())
         self.S_dig_vec_1.from_numpy(S_dig_np_1)
         self.S_dig_vec_2 = ti.Vector.field(Q, ti.f32, shape=())
         self.S_dig_vec_2.from_numpy(S_dig_np_2)
         self.e_xyz = ti.Vector.field(dim, dtype=ti.i32, shape=(Q))
-        self.e_xyz.from_numpy(np.array(lbm.e_xyz_list))
+        self.e_xyz.from_numpy(np.array(parameters.e_xyz_list))
         self.ef_xyz = ti.Vector.field(dim, dtype=ti.f32, shape=(Q))
-        self.ef_xyz.from_numpy(np.array(lbm.e_xyz_list))
+        self.ef_xyz.from_numpy(np.array(parameters.e_xyz_list))
 
         # REVERSED_E stores the index of the opposite component to every component in e_xyz_np
         # For example, for [1,0,0], the opposite component is [-1,0,0] which has the index of 2 in e_xyz
@@ -333,11 +338,11 @@ class D3Q19_MC:
 
         self.Gl[0] = G_12
         self.Gl[1] = G_1s
-        self.Gl[2] = G_11 # if G_11 is not zero, it's multiphase
+        self.Gl[2] = G_11 # if G_11 is not zero, the first fluid is multiphase
 
         self.Go[0] = G_12
         self.Go[1] = G_2s
-        self.Go[2] = G_22
+        self.Go[2] = G_22 # if G_22 is not zero, the second fluid is multiphase
 
         ti.static(self.inv_M_mat)
         ti.static(self.IS_SOLID)
@@ -353,25 +358,35 @@ class D3Q19_MC:
 
     @ti.kernel
     def update_psi(self):
+        """
+        Update the pseudo potential at current fluid node.
+        """
         for I in ti.grouped(self.collide_f_1):
             if I.x < lx and I.y < ly and I.z < lz and self.IS_SOLID[I] == 0:
+                # Update psi_1 and psi_2 fields based on the local density of fluid cells.
                 self.psi_1[I] = Inter_psi(self.rho_1[I])
                 self.psi_2[I] = Inter_psi(self.rho_2[I])
-                # Kruger's
+                # Update pressure field using Kruger's equation.
                 self.pressure[I] = (
-                    lbm.cs2 * (self.rho_1[I] + self.rho_2[I])
-                    + lbm.cs2 * G_12 / 2 * self.psi_1[I] * self.psi_2[I]
+                    parameters.cs2 * (self.rho_1[I] + self.rho_2[I])
+                    + parameters.cs2 * G_12 / 2 * self.psi_1[I] * self.psi_2[I]
                 )
+
 
     @ti.kernel
     def update_force(self):
+        """
+        Updates the force vectors for each fluid node based on its neighboring nodes.
+        """
         for I in ti.grouped(self.collide_f_1):
             if I.x < lx and I.y < ly and I.z < lz and self.IS_SOLID[I] == 0:
+                # Initialize force vectors for fluid 1 and fluid 2 to zero.
                 force_1 = ti.Vector([0.0, 0.0, 0.0])
                 force_2 = ti.Vector([0.0, 0.0, 0.0])
 
                 for i in ti.static(range(dim)):
                     for s in ti.static(range(1, Q)):
+                        # Calculate the inter-component forces between fluid 1 and fluid 2 or between fluid 1 and the solid.
                         neighbor_pos = self.periodic_index(I + self.e_xyz[s])
                         force_1[i] += (
                             -self.psi_2[neighbor_pos]
@@ -379,35 +394,44 @@ class D3Q19_MC:
                             * self.w[s]
                             * self.Gl[self.IS_SOLID[neighbor_pos]]
                             * self.ef_xyz[s][i]
-                        )+(
+                        )
+                        # Calculate the intra-component force if fluid 1 is multiphase.
+                        force_1[i] += (
                             -Intra_psi(self.rho_1[neighbor_pos])
-                            *Intra_psi(self.rho_1[I])
+                            * Intra_psi(self.rho_1[I])
                             * self.w[s]
                             * self.Gl[2]
-                            * self.ef_xyz[s][i]   
-                            *(1-self.IS_SOLID[neighbor_pos])
+                            * self.ef_xyz[s][i]
+                            * (1 - self.IS_SOLID[neighbor_pos])
                         )
 
+                        # Calculate the inter-component force between fluid 2 and fluid 1 or between fluid 2 and the solid
                         force_2[i] += (
                             -self.psi_1[neighbor_pos]
                             * self.psi_2[I]
                             * self.w[s]
                             * self.Go[self.IS_SOLID[neighbor_pos]]
                             * self.ef_xyz[s][i]
-                        )+(
+                        )
+                        # Calculate the intra-component force if fluid 2 is multiphase.
+                        force_2[i] += (
                             -Intra_psi(self.rho_2[neighbor_pos])
-                            *Intra_psi(self.rho_2[I])
+                            * Intra_psi(self.rho_2[I])
                             * self.w[s]
                             * self.Go[2]
                             * self.ef_xyz[s][i]
-                            *(1-self.IS_SOLID[neighbor_pos])
+                            * (1 - self.IS_SOLID[neighbor_pos])
                         )
 
+                # Assign the calculated force vectors to the fluid nodes.
                 self.force_1[I] = force_1
                 self.force_2[I] = force_2
 
     @ti.kernel
     def update_velocity(self):
+        """
+        Updates the velocity for each fluid node based on its pdf and force.
+        """
         for I in ti.grouped(self.collide_f_1):
             if I.x < lx and I.y < ly and I.z < lz and self.IS_SOLID[I] == 0:
 
@@ -424,33 +448,6 @@ class D3Q19_MC:
 
                     self.v_1[I][i] = (temp_vel_1 + self.force_1[I][i] * tau_1f) / self.rho_1[I]
                     self.v_2[I][i] = (temp_vel_2 + self.force_2[I][i] * tau_2f) / self.rho_2[I]
-
-    @ti.kernel
-    def update_velocity_(self):
-        for I in ti.grouped(self.collide_f_1):
-            if I.x < lx and I.y < ly and I.z < lz and self.IS_SOLID[I] == 0:
-
-                for i in ti.static(range(dim)):
-                    temp_vel_1 = 0.0
-                    temp_vel_2 = 0.0
-                    for s in ti.static(range(Q)):
-                        temp_vel_1 += (
-                            self.collide_f_1[I][s] * self.ef_xyz[s][i] 
-                        )
-                        temp_vel_2 += (
-                            self.collide_f_2[I][s] * self.ef_xyz[s][i] 
-                        )
-
-
-                    if self.rho_1[I] != 0.0:
-                        self.v_1[I][i] = (
-                            temp_vel_1 + self.force_1[I][i] * tau_1f )/ self.rho_1[I]
-                        
-
-                    if self.rho_2[I] != 0.0:
-                        self.v_2[I][i] = (
-                            temp_vel_2 + self.force_2[I][i] * tau_2f )/ self.rho_2[I]
-                        
                         
     @ti.func
     def meq_vec(self, rho_local, u):
@@ -493,7 +490,9 @@ class D3Q19_MC:
 
     @ti.func
     def place_fluid_sphere(self, x, y, z, R):
-
+        """
+        Place a sphere of fluid 1 in fluid 2 (to conduct droplet test).
+        """
         xmin = x - R
         ymin = y - R
         zmin = z - R
@@ -545,8 +544,15 @@ class D3Q19_MC:
             if self.IS_SOLID[x, y, z] == 0:
                 self.rho_1[x, y, z] = rho_1/20
                 self.rho_2[x, y, z] = rho_2
-                
-        self.place_fluid_sphere(50, 50, 12, 13)
+        
+        # Measure the contact angle by conducting a droplet test
+        if R>0:
+            for x in range(lx):
+                for y in range(ly):
+                    self.IS_SOLID[x, y, lz - 1] = 1
+                    self.IS_SOLID[x, y, 0] = 1
+            self.place_fluid_sphere(int(lx/2), int(ly/2), R, R+1)
+             
 
         for x, y, z in self.IS_SOLID:
             if self.IS_SOLID[x, y, z] == 0:
@@ -554,11 +560,11 @@ class D3Q19_MC:
                 self.psi_2[x, y, z] = Inter_psi(self.rho_2[x, y, z])
 
                 for q in ti.static(range(Q)):
-                    self.collide_f_1[x, y, z][q] = lbm.t[q] * self.rho_1[x, y, z]
-                    self.stream_f_1[x, y, z][q] = lbm.t[q] * self.rho_1[x, y, z]
+                    self.collide_f_1[x, y, z][q] = parameters.t[q] * self.rho_1[x, y, z]
+                    self.stream_f_1[x, y, z][q] = parameters.t[q] * self.rho_1[x, y, z]
 
-                    self.collide_f_2[x, y, z][q] = lbm.t[q] * self.rho_2[x, y, z]
-                    self.stream_f_2[x, y, z][q] = lbm.t[q] * self.rho_2[x, y, z]
+                    self.collide_f_2[x, y, z][q] = parameters.t[q] * self.rho_2[x, y, z]
+                    self.stream_f_2[x, y, z][q] = parameters.t[q] * self.rho_2[x, y, z]
 
     # check if sparse storage works!
     @ti.kernel
@@ -573,7 +579,7 @@ class D3Q19_MC:
         for I in ti.grouped(self.collide_f_1):
             if I.x < lx and I.y < ly and I.z < lz and self.IS_SOLID[I] == 0:
                 if ti.static(MRT):
-                    """MRT operator"""
+                    #MRT operator
                     m_1 = self.M_mat[None] @ self.collide_f_1[I]
                     m_eq_1 = self.meq_vec(self.rho_1[I], self.v_1[I])
                     m_1 -= self.S_dig_vec_1[None] * (m_1 - m_eq_1)
@@ -633,12 +639,12 @@ class D3Q19_MC:
                     self.collide_f_2[I] += self.inv_M_mat[None] @ m_2
 
                 else:
-                    """BGK operator"""
+                    # using BGK operator
                     u_squ_1 = self.v_1[I].dot(self.v_1[I])
                     for s in ti.static(range(Q)):
                         eu = self.ef_xyz[s].dot(self.v_1[I])
                         self.collide_f_1[I][s] += (
-                            lbm.t[s]
+                            parameters.t[s]
                             * self.rho_1[I]
                             * (1.0 + 3.0 * eu + 4.5 * eu * eu - 1.5 * u_squ_1)
                             - self.collide_f_1[I][s]
@@ -648,7 +654,7 @@ class D3Q19_MC:
                     for s in ti.static(range(Q)):
                         eu = self.ef_xyz[s].dot(self.v_2[I])
                         self.collide_f_2[I][s] += (
-                            lbm.t[s]
+                            parameters.t[s]
                             * self.rho_2[I]
                             * (1.0 + 3.0 * eu + 4.5 * eu * eu - 1.5 * u_squ_2)
                             - self.collide_f_2[I][s]
@@ -656,7 +662,9 @@ class D3Q19_MC:
 
     @ti.kernel
     def post_collsion(self):
-        """Calculate force and velocity"""
+        """
+        Update density distribution after after collision.
+        """
         for I in ti.grouped(self.collide_f_1):
             if I.x < lx and I.y < ly and I.z < lz and self.IS_SOLID[I] == 0:
                 self.collide_f_1[I] = self.stream_f_1[I]
@@ -685,6 +693,9 @@ class D3Q19_MC:
 
     @ti.kernel
     def streaming(self):
+        """
+        Propogate the density distribution to neighboring fluid nodes.
+        """
         for i in ti.grouped(self.collide_f_1):
             if self.IS_SOLID[i] == 0 and i.x < lx and i.y < ly and i.z < lz:
                 for s in ti.static(range(Q)):
@@ -697,6 +708,9 @@ class D3Q19_MC:
                         self.stream_f_2[i][self.REVERSED_E[s]] = self.collide_f_2[i][s]
 
     def export_VTK(self, n):
+        """
+        Export the fluid field to VTK.
+        """
         x = np.linspace(0, lx, lx)
         y = np.linspace(0, ly, ly)
         z = np.linspace(0, lz, lz)
@@ -705,7 +719,7 @@ class D3Q19_MC:
         grid_z = np.linspace(0, lz, lz)
         X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
         gridToVTK(
-            vtk_path +"MC_Gads2" + str(G_2s)+'_'+str(n),
+            vtk_path +'vkt_'+str(n),
             grid_x,
             grid_y,
             grid_z,
@@ -744,9 +758,8 @@ class D3Q19_MC:
         )
 
     def run(self, max_step=20000):
-
+                
         while self.step[None] < max_step:
-
             if (self.step[None]) % vtk_dstep == 0:
                 self.export_VTK(self.step[None] // vtk_dstep)
                 print(
@@ -820,22 +833,22 @@ class D3Q19_SC:
 
         # to compare if disassembled for-loop is faster or not
         self.w = ti.field(ti.f32, shape=(Q))
-        self.w.from_numpy(lbm.w)
+        self.w.from_numpy(parameters.w)
 
         self.M_mat = ti.Matrix.field(Q, Q, ti.f32, shape=())
         self.inv_M_mat = ti.Matrix.field(Q, Q, ti.f32, shape=())
 
-        self.M_mat[None] = ti.Matrix(lbm.M_np)
-        self.inv_M_mat[None] = ti.Matrix(lbm.inv_M_np)
+        self.M_mat[None] = ti.Matrix(parameters.M_np)
+        self.inv_M_mat[None] = ti.Matrix(parameters.inv_M_np)
 
         self.S_dig_vec_1 = ti.Vector.field(Q, ti.f32, shape=())
         self.S_dig_vec_1.from_numpy(S_dig_np_1)
 
         self.e_xyz = ti.Vector.field(dim, dtype=ti.i32, shape=(Q))
-        self.e_xyz.from_numpy(np.array(lbm.e_xyz_list))
+        self.e_xyz.from_numpy(np.array(parameters.e_xyz_list))
 
         self.ef_xyz = ti.Vector.field(dim, dtype=ti.f32, shape=(Q))
-        self.ef_xyz.from_numpy(np.array(lbm.e_xyz_list))
+        self.ef_xyz.from_numpy(np.array(parameters.e_xyz_list))
 
         # REVERSED_E stores the index of the opposite component to every component in e_xyz_np
         # For example, for [1,0,0], the opposite component is [-1,0,0] which has the index of 2 in e_xyz
@@ -910,7 +923,7 @@ class D3Q19_SC:
     
 
     @ti.func
-    def force_vec(self, local_pos) -> lbm.f32_vec3d:
+    def force_vec(self, local_pos) -> parameters.f32_vec3d:
         force_vec = ti.Vector([0.0, 0.0, 0.0])
         local_psi = Intra_psi(self.rho_1[local_pos])
         for i in ti.static(range(3)):
@@ -922,7 +935,7 @@ class D3Q19_SC:
         return force_vec
 
     @ti.func
-    def velocity_vec(self, local_pos) -> lbm.f32_vec3d:
+    def velocity_vec(self, local_pos) -> parameters.f32_vec3d:
         velocity_vec = ti.Vector([0.0, 0.0, 0.0])
         for i in ti.static(range(3)):
             for s in ti.static(range(Q)):
@@ -1019,8 +1032,8 @@ class D3Q19_SC:
         for x, y, z in self.IS_SOLID:
             if self.IS_SOLID[x, y, z] == 0:
                 for q in ti.static(range(Q)):
-                    self.collide_f_1[x, y, z][q] = lbm.t[q] * self.rho_1[x, y, z]
-                    self.stream_f_1[x, y, z][q] = lbm.t[q] * self.rho_1[x, y, z]
+                    self.collide_f_1[x, y, z][q] = parameters.t[q] * self.rho_1[x, y, z]
+                    self.stream_f_1[x, y, z][q] = parameters.t[q] * self.rho_1[x, y, z]
 
     @ti.kernel
     def collision(self):
@@ -1068,7 +1081,7 @@ class D3Q19_SC:
                     for s in ti.static(range(Q)):
                         eu = self.ef_xyz[s].dot(self.v_1[I])
                         self.collide_f_1[I][s] += (
-                            lbm.t[s]
+                            parameters.t[s]
                             * self.rho_1[I]
                             * (1.0 + 3.0 * eu + 4.5 * eu * eu - 1.5 * u_squ)
                             - self.collide_f_1[I][s]
@@ -1114,6 +1127,9 @@ class D3Q19_SC:
                         ]
 
     def run(self, max_step=1000):
+        
+        print("The number of solid nodes is ", nb_solid)
+        print("Porosity = {:.3f}".format(1 - nb_solid / (lx * ly * lz)))
 
         self.export_VTK(self.step[None] // vtk_dstep)
 

@@ -1,0 +1,47 @@
+{
+    "Q": 19,
+    "dimension": 3,
+    "fluid 1": {
+        "viscosity": 0.2,
+        "density": 0.3,
+        "solid cohesion": -4,
+        "inter-molecule interaction": 2,
+        "intra-molecule interaction": -1
+    },
+    "fluid 2": {
+        "viscosity": 0.2,
+        "density": 0.04,
+        "solid cohesion": 4,
+        "intra-molecule interaction": 0
+    },
+    "solid": {
+        "density": 0.35,
+        "grain location": null,
+        "voxel location": null,
+        "read tiff":"./Hamburg_Sand.tif",
+        "scale factor":2
+    },
+    "size": {
+        "lx": 100,
+        "ly": 100,
+        "lz": 100
+    },
+    "setting": {
+        "MRT": false,
+        "multicomponent": true,
+        "sparse memory": true,
+        "vtk period": 1000,
+        "stat period": 1000,
+        "number of steps": 20001,
+        "output folder": "./sand/",
+        "inject period": 100,
+        "inject amount": 0.0,
+        "fluid sphere radius": 12
+    },
+    "EOS": {
+        "Carnahan Starling":true,
+        "T_Tc": 0.7,
+        "maximum liquid density": 0.2725,
+        "minimum vapor density": 0.0484
+    }
+}
