@@ -13,9 +13,14 @@ The Multi-Relaxation-Time collision scheme and sparse storage structure can help
 
 Here are some examples of how to use this project:
 
-![Injecting fluid to granular media]<img src="/screenshots/3d_hamburg_injection.gif" alt="Screenshot" width="200"/>
+1. Injection of water to granular media:
+<img src="/screenshots/3d_hamburg_injection.gif" alt="Screenshot" width="500"/>
 
-![Determing contact angle vs. adhesion parameter Gads](/screenshots/contact_angle.png)
+2. A droplet test:
+<img src="/screenshots/droplet_test.gif" alt="Screenshot" width="500"/>
+
+3. Determination contact angle for one fluid surrounded by another fluid vs. adhesion parameters:
+<img src="/screenshots/contact_angle.png" alt="Screenshot" width="500"/>
 
 ## Contributing
 
