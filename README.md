@@ -1,4 +1,5 @@
-# 3D_MCMP_MRT_LBM
+# 3D Multi-component Multiphase Lattice Boltzmann Method
+
 A 3D multicomponent multiphase lattice Boltzmann solver with a Multi-Relaxation-Time collision scheme and a sparse storage structure
 The Multi-Relaxation-Time collision scheme and sparse storage structure can help improve the accuracy and efficiency of the simulations, allowing for larger and more complex simulations to be performed.
 
@@ -28,7 +29,7 @@ This project is licensed under the MIT License. See the LICENSE file for details
 
 ## Support
 
-If you encounter any problems while using this project, please [open an issue](https://github.com/Amber1995/3D-MCMP-MRT-LBM/issues/new).
+If you encounter any problems while using this project, please [open an issue](https://github.com/geoelements/mcmp-lbm/issues/new).
 
 ## Contributors
 
