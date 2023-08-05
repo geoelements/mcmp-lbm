@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "Multi-component Multiphase Lattice Boltzmann Method"
+version = "0.1.0"
+description = "Multi-component Multiphase Lattice Boltzmann Method for modeling unsaturated fluid flow in granular media"
+authors = ["Qiuyu Wang and Krishna Kumar <krishnak@utexas.edu>"]
+
+[tool.poetry.dependencies]
+python = ">3.9,<3.12"
+numpy = "^1.25.2"
+pandas = "^2.0.3"
+pyevtk = "^1.6.0"
+scipy = "^1.11.1"
+sympy = "^1.12"
+taichi = "^1.6.0"
+tifffile = "^2023.7.18"
+vtk = "^9.2.6"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

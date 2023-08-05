@@ -1,0 +1,8 @@
+numpy
+pandas
+pyevtk
+scipy
+sympy
+taichi
+tifffile
+vtk

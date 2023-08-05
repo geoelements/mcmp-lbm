@@ -14,7 +14,7 @@ import os, sys
 import lbm_solver as lbm
 
 # ti.init(arch=ti.gpu, dynamic_index=False)
-ti.init(arch=ti.cpu,cpu_max_num_threads=32, dynamic_index=False)
+ti.init(arch=ti.cpu,cpu_max_num_threads=32)
 
 if len(sys.argv) < 2:
     print("Please provide input file path.")
